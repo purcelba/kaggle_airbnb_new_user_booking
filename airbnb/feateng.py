@@ -1,24 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-airbnbn_feature_engineering.py
-
-Generate an N x P feature matrix, where N are observations (users) and P are features.  
-
-The results will be saved in dataframes df_train (training set), df_all (test_set), and labels (training set labels for predictor variable)
-
-All three dataframes are saved as csv. files in the cache folder using following naming convention:
-    df_train_v1.csv
-    df_test_v1.csv
-    labels.csv
-where "v1" will be replaced with "v2, v3, etc ..." depending on the version number.
-
-
-Several variables contain missing data:
-    age (continuous)
-    first_affiliate_tracked (categorical)
-    gender (categorical)
-    language (categorical)
-
+Feature engineering for modeling user booking destination for the Kaggle Airbnb New User Booking challenge.
 """
 
 import numpy as np
@@ -26,18 +8,29 @@ import pandas as pd
 import datetime
 
 
-def feateng1(training_data, test_data, add_sessions, rm_classes, merge_classes, add_logreg_filename, rescale_predictors, debug):
+def feateng1(training_data, test_data, add_sessions, rm_classes, merge_classes, rescale_predictors, debug):
     """
-    Args:
+    Params:
     - training_data, str, path to the training data (.csv file)
     - test_data, str, path to the test data (.csv file)
-    - debug, logical, True for debug mode which will eliminate most of the data for fast protoyping
+    - add_sessions, str, can be 'none','bin', 'count', or 'secs'
+        - 'none' will not add any sessions features
+        - 'bin' will add binary features indicating 1 if a a user took an action was taken and 0 otherwise
+        - 'count' will add integer features indicating the number of times a user took an action
+        - 'secs' will add integer features indicating the number of seconds users spent on each action
+    - rm_classes, list of str, list of classes to be removed from the data set.  If empty, remove none.
+        - can be 'other','US','FR','CA','GB','ES','IT','PT','NL','DE','AU'
+    - merge_classes, list of str, list of classes to be merged to a single class. If empty, merge none.
+        - can be 'other','US','FR','CA','GB','ES','IT','PT','NL','DE','AU'
+    - rescale_redictors, logical, if True, then rescale all features between 0 and 1
+    - debug, logical, if True eliminate all but 10,000 observations for fast debugging of code.
 
     Returns:
-    - df_train, dataframe, formatted feature matrix of training data (observations x features) 
-    - df_test, dataframe, formatted feature matrix of test data (obs x feats)
+    - df_train, dataframe, feature matrix of training data (observations x features) 
+    - df_test, dataframe, feature matrix of test data (obs x feats)
     - labels, dataframe, labels associated with each training observation
-    - id_test, dataframe, unique id for each observation in test data. Used to generate submission file.
+    - id_train, dataframe, unique id for each observation in training data.
+    - id_test, dataframe, unique id for each observation in test data.
   
     """
     
@@ -163,27 +156,6 @@ def feateng1(training_data, test_data, add_sessions, rm_classes, merge_classes, 
         scaler = MinMaxScaler().fit(df_all)
         df_all = pd.DataFrame(scaler.transform(df_all), columns = df_all.columns)
 
-    #if requested, load a logistic regression model and generate predictions for
-    #classification of NDF versus all others.
-    if add_logreg_filename:
-        #imports
-        import pickle
-        from sklearn.externals import joblib
-        from sklearn.preprocessing import MinMaxScaler
-        #load the model
-        loaded_model = joblib.load(add_logreg_filename)
-        result = loaded_model
-        #generate predictions and append
-        pred_prob = result.predict_proba(np.array(df_all))
-        #convert prob to log-odds
-        log_odds = np.log(pred_prob/(1 - pred_prob))
-        #rescale if requested
-        if rescale_predictors:
-            scaler = MinMaxScaler().fit(log_odds)
-            log_odds = scaler.transform(log_odds)
-        #append to dataframe
-        df_all['log_odds_pred'] = log_odds[:,0]
-
     #Split train/test set
     df_train = df_all[:n_train]
     df_test = df_all[n_train:]
@@ -199,12 +171,11 @@ if __name__ == '__main__':
     #options
     training_data = 'data/train_users_2.csv'         #path to training data
     test_data = 'data/test_users.csv'                #path to test data
-    add_sessions = 'bin'                                #'none','bin','count','secs'
-    rm_classes = []                                     #list of classes to remove, if empty remove none.
-    merge_classes = []          #['other','US','FR','CA','GB','ES','IT','PT','NL','DE','AU']
-    add_logreg_filename = 'logregModel_binsesh_merged.sav'                            #"../output/logregModel_NDF_other_bin.sav"
+    add_sessions = 'bin'                             #'none','bin','count','secs'
+    rm_classes = []                                  #list of classes to remove, if empty remove none.
+    merge_classes = []                               #['other','US','FR','CA','GB','ES','IT','PT','NL','DE','AU']
     rescale_predictors = True
     debug=False                                          #run in debug mode? (toss observations)
-
     #run
-    feateng1(training_data, test_data, add_sessions, rm_classes, merge_classes, add_logreg_filename, rescale_predictors, debug)
+    feateng1(training_data, test_data, add_sessions, rm_classes, merge_classes, rescale_predictors, debug)
+    

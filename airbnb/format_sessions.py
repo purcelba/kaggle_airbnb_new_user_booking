@@ -1,47 +1,17 @@
-"""
-Purpose of this code is to preprocess the data in the sessions.csv file to see if any of the
-features may be useful for prediction.
-
-This code is slow! so preprocessing will speed up model testing.
-
-
-Each combination of action, action_type, and action_detail defines a feature vector for the user
-The entries of the vector are either counts for the number of times that combination occurred or
-the number of seconds that those combinations occurred.  The vector itself is 179 features.
-Dimensionality reduction may help here since so many features.
-Note that we are losing temporal information here. N_grams are a possible mehtod to reintroduce
-temporal context information but not a strong reason to think that it will improve performance
-for predicing bookings.
-
-Possible representations of data for each user_id
-- sum number of times an action,action_type,action_detail taken
-- sum number of seconds spent on an action,action_type,action_detail
-- sum number of any actions taken
-- sum number of secs_elapsed for all actions
-- device type used by each user (list of all devices)
-
-Consider running some form of dimensionality reduction on the action list matrix
-Goal is to replace huge list of action, type, and detail combinations with a reduced number of latent
-factors that summarize the variability in the data.
-Be sure to plot variance explained to understand whether reduction was effective.
-
-For example, viewing search results and changing trip characteristics may be highly correlated.
-Reducing them to a single latent variable may improve model fitting.
-
-Need to evaluate models in which different features are or are not included.
-For example, do we gain anything by including secs_elapsed or is it just redundent?
-What about summing number of times an action taken versus just flagging it?
-
-On another note, would be good to try a model in which NDF is ignored and then blend with a more
-complete model.  How is the unbalanced data affecting the fit?
-
-"""
-
-
 import numpy as np
 import pandas as pd
 import os
+"""
+Preprocess the data in the sessions.csv file.  Encode each combination of action_name, action_type,
+and action_detail as a separate variable.  
 
+Warning - this code is slow, but results an be saved and loaded for efficient model testing.
+
+Each combination of action, action_type, and action_detail defines a new feature. 
+The entires of the feature vectors can be (1) "bin": binary indicating 1 if the combination occured and zero
+otherwise, (2) "counts":  the number of times that combination occurred for a given user, or (3)
+the number of seconds that those combinations occurred.  In total 179 features are generated.
+"""
 
 # get an array of indicator variables for devices used
 # columns = devices, rows = users
@@ -156,6 +126,19 @@ def getActAssoc(sessions):
     return act_assoc_count, act_assoc_bin, act_assoc_secs
 
 def main(sessions_path, save_dir, **kwargs):
+    """
+    Wrapper script for formatting sessions data and saving as csv.
+    
+    Params:
+    - sessions_path, str, path to the sessions.csv file to be loaded
+    - save_dir, str, directory in which the generated csv files will be saved
+    Keywords:
+    - debug , logical, which or not to drop all but first 1000 observations for fast debugging (default = False)
+    
+    Returns:
+    - No variables returned.  Results are saved as .csv in requested directory.
+    
+    """
     #set prng seed
     np.random.seed(0)
     #load sessions data
@@ -193,28 +176,3 @@ if __name__ == '__main__':
     #debug
     debug_ = False
     main(sessions_path,save_dir,debug=debug_)
-
-
-
-
-    # #now we need to map the rows of act_assoc_count and act_assoc_secs
-    # #to the rows of our training and test data
-    #     #check how large of an intersection between the groups
-    # id_list = np.sort(pd.unique(sessions['user_id']))
-    # df_all_id_list=list(df_all['id'])
-    # id_intersect=np.intersect1d(df_all_id_list,id_list)
-    # print("Total intersect with sessions = %d/%d (%2.2f%%)" % (len(id_intersect), len(df_all_id_list),100*(float(len(id_intersect))/float(len(df_all_id_list)))))
-    #
-    # df_train_id_list=list(df_train['id'])
-    # id_intersect=np.intersect1d(df_train_id_list,id_list)
-    # print("Train intersect with sessions = %d/%d (%2.2f%%)" % (len(id_intersect), len(df_train_id_list),100*(float(len(id_intersect))/float(len(df_train_id_list)))))
-    #
-    # df_test_id_list=list(df_test['id'])
-    # id_intersect=np.intersect1d(df_test_id_list,id_list)
-    # print("Test intersect with sessions = %d/%d (%2.2f%%)" % (len(id_intersect), len(df_test_id_list),100*(float(len(id_intersect))/float(len(df_test_id_list)))))
-
-        #join the dataframes
-    #df_all.index=df_all['id']   #set the index of df_all to the id so that we can join with act_assoc dataframes
-    #df_all=df_all.join(act_assoc_count,how='left')
-    #df_all=df_all.join(act_assoc_secs,how='left')
-    #df_all=df_all.join(device_indicators,how='left')

@@ -7,11 +7,11 @@ from sklearn.model_selection import RandomizedSearchCV
 import pickle
 
 """
-Must import the following modules for use on cluster:
+Fit XGBoost model implemented in scikit-learn to the kaggle-airbnb data set.  Use randomized
+search with 5-fold cross-validation to select the hyperparameters. 
+
+If running on HPC computing cluster, must import the following modules:
 module load python/intel/2.7.12
-module load keras/2.0.2
-module load tensorflow/python2.7/20170218
-module load h5py/intel/2.7.0rc2
 module load scikit-learn/intel/0.18.1
 """
 
@@ -20,6 +20,13 @@ module load scikit-learn/intel/0.18.1
 def split_train_test(df_train, labels):
     """
     Split training data into train and holdout sets (last 10% of data).
+    Params:
+    - df_train, DataFrame, feature matrix (obs x feats)
+    - labels, DataFrame, class labels (obs x 1)
+    Returns:
+    X, dict, feature matrix for training and holdout data sets are stored in the 'train' 
+             and 'holdout' keys, respectively
+    Y, dict, class labels for training and holdout data sets in 'train' and 'holdout'
     """
     n_train = np.shape(df_train)[0]
     X = {'train': [], 'holdout': []}  # features
@@ -32,22 +39,24 @@ def split_train_test(df_train, labels):
     return X, Y
 
 
-def rescale_predictors(X):
+def main(data_directory, add_sessions, output_file_name, rescale_predictors, seed, n_iter):
     """
-    Rescale predictors between zero and one before fitting.
-    Prevents variables with larger variance from dominating prediction error.
-    """
-    for k in X.keys():
-        scaler = MinMaxScaler().fit(X[k])
-        X[k] = pd.DataFrame(scaler.transform(X[k]), columns=X[k].columns)
-    return X
-
-
-def main(data_directory, add_sessions, output_file_name, seed, n_iter):
-    """
+    Fit XGBoost model implemented in scikit-learn to the kaggle-airbnb data set.  Use randomized
+    search with 5-fold cross-validation to select the hyperparameters. 
+    
     Params:
+    - data_diretory, str, path to directory in which data are stored
+    - add_sessions, str, can be 'none','bin', 'count', or 'secs'
+        - 'none' will not add any sessions features
+        - 'bin' will add binary features indicating 1 if a a user took an action was taken and 0 otherwise
+        - 'count' will add integer features indicating the number of times a user took an action
+    - output_file_name, str, name of txt file in which to write results.
+    - rescale_predictors, logical, if True, then will rescale predictors in the feature matrix between 0 and 1.
+    - seed, int, fix the PRNG seed
+    - n_iter, int, number of samples to take from the hyperparameter distributions  
 
     Returns:
+      No variables returned.  Model results are saved as sav file for reloading.
 
     """
     # Load the data and generate features
@@ -56,8 +65,8 @@ def main(data_directory, add_sessions, output_file_name, seed, n_iter):
     rm_classes = []
     training_data = data_directory + 'train_users_2.csv'
     test_data = data_directory + 'test_users.csv'
-    df_train, df_test, labels = feateng.feateng1(training_data, test_data, add_sessions, rm_classes, merge_classes,
-                                                 debug)
+    df_train, df_test, labels, id_train, id_test = feateng.feateng1(training_data, test_data, add_sessions, rm_classes, merge_classes,
+                                                                    rescale_predictors)
 
     # print some information about the data
     n_train, n_feats = np.shape(df_train)
@@ -77,9 +86,6 @@ def main(data_directory, add_sessions, output_file_name, seed, n_iter):
 
     # split training data into train and holdout sets (last 10% of data)
     X, Y = split_train_test(df_train, labels)
-
-    # If requested, rescale predictors between zero and one.
-    X = rescale_predictors(X)
 
     # set up randomized search parameter distributions
     import scipy.stats as st
@@ -106,19 +112,23 @@ def main(data_directory, add_sessions, output_file_name, seed, n_iter):
                         seed=seed)
     # execute randomized search with xgboost
     from sklearn.model_selection import RandomizedSearchCV
-    gs = RandomizedSearchCV(xgb, params, n_jobs=-1, n_iter=n_iter, verbose=2)
+    gs = RandomizedSearchCV(xgb, params, n_jobs=1, n_iter=n_iter, verbose=2)
+    gs.fit(X['train'], Y['train']) 
+    result = gs.best_estimator_
 
     #save resulting model with pickle
-    pickle.dump(gs, open(output_file_name, 'wb'))
+    pickle.dump(result, open(output_file_name, 'wb'))
 
 if __name__ == '__main__':
 
     #choose params
     data_directory = 'data/'
     add_sessions = 'bin'
-    output_file_name = 'xgbModel_bin.sav'
-    seed = 0
+    output_file_name = 'xgbModel_binsesh2.sav'
+    rescale_predictors = True
+    seed = 1
     n_iter = 5
+    add_logreg_filename = []#'logregModel_binsesh_merged.sav'
 
     #print
     print "data_directory: %s" % (data_directory)
@@ -127,4 +137,4 @@ if __name__ == '__main__':
     print "seed: %s" % (seed)
 
     #execute main function
-    main(data_directory, add_sessions, output_file_name, seed, n_iter)
+    main(data_directory, add_sessions, output_file_name, rescale_predictors, seed, n_iter)

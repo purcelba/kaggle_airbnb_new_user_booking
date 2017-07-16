@@ -1,19 +1,3 @@
-#To run on HPC
-#
-#Must import the following modules:
-# module load python/intel/2.7.12
-# module load keras/2.0.2
-# module load tensorflow/python2.7/20170218
-# module load h5py/intel/2.7.0rc2 (if saving models)
-#
-# To do:
-# (1) test environmental variable inputs
-# (2) test gpu speed improvement
-# (3) add some printing in json format for compiling results
-# (4) consider also recording binary_crossentropy for each model
-#     and also writing custom function to recording likelihood
-#
-import json
 import os
 import pandas as pd
 import time
@@ -26,7 +10,17 @@ from keras.wrappers.scikit_learn import KerasClassifier
 from keras.optimizers import SGD
 import feateng
 from sklearn.preprocessing import LabelEncoder, label_binarize, MinMaxScaler
+import scipy.stats as st
 
+"""
+Randomized search for multilayer perceptron hyperparameters implemented in Keras fitted
+to the kaggle-airbnb dataset.  
+Inputs are distributions from scipy.stats or sets of MLP hyperparameters from which to samples.
+When running as script, setting local_mode to false will read in environmental variables
+as input to be used on computing cluster.  
+The resulting best fit hyperparameters are output to a text file where they can be loaded 
+for further analysis.
+"""
 def split_train_test(df_train,labels):
     """
     Split training data into train and holdout sets (last 10% of data).
@@ -41,26 +35,46 @@ def split_train_test(df_train,labels):
     Y['train'] = labels[:(n_train-p10)]
     return X,Y
 
-def rescale_predictors(X):
+def main(data_directory, add_sessions, output_filename, rescale_predictors, seed, n_iter, cv, batch_size, epochs, learn_rate, momentum, init_mode, activation, dropout_rate, neurons, layers):
     """
-    Rescale predictors between zero and one before fitting.
-    Prevents variables with larger variance from dominating prediction error.
+    Randomized search for multilayer perceptron hyperparameters implemented in Keras fitted
+    to the kaggle-airbnb dataset.  The resulting best fit hyperparameters are printed to a
+    text file where they can be loaded for further analysis.
+    
+    Params:
+      General params:
+        - data_diretory, str, path to directory in which data are stored
+        - add_sessions, str, can be 'none','bin', 'count', or 'secs'
+            - 'none' will not add any sessions features
+            - 'bin' will add binary features indicating 1 if a a user took an action was taken and 0 otherwise
+            - 'count' will add integer features indicating the number of times a user took an action
+            - 'secs' will add integer features indicating the number of seconds users spent on each action
+        - output_filename, str, name of txt file in which to write results.
+        - rescale_predictors, logical, if True, then will rescale predictors in the feature matrix between 0 and 1.
+        - seed, int, set the PRNG seed
+        - n_iter, int, number of samples to take from the hyperparameter distributions  
+        - cv, int, number of folds for cross validation
+      Hyperparameter sets or distributions from which samples will be drawn:
+        - batch_size, list of int, mini-batch size for stochastic gradient descent
+        - epochs, list of int, number of training epochs (i.e., how many times will full data set be used for training)
+        - learn_rate, list of float, learning rate for stochastic gradient descent
+        - momentum, list of float, momentum for stochastic gradient descent (fraction of the  update vector of the past time step to be added to the current vector).
+        - init_mode, list of str, weight initialization (e.g., 'random_uniform' for random).  See https://keras.io/initializers/ for other options. 
+        - activation, list of str, activation function for input and hidden layers (e.g., 'relu' for rectified linear unit).  See https://keras.io/activations/ for other options.
+        - neurons, list of int or scipy.stats distribution function, number of neurons in the input and hidden layers 
+        - layers, list of int, number of hidden layers.
+    
+    Returns:
+      No variables returned.  Results are printed to txt file defined by output_filename for combining with output of other jobs.
+
     """
-    for k in X.keys():
-        scaler = MinMaxScaler().fit(X[k])
-        X[k] = pd.DataFrame(scaler.transform(X[k]), columns = X[k].columns)
-    return X
-
-def main(data_directory, output_filename, seed, n_iter, cv, batch_size, epochs, learn_rate, momentum, init_mode, activation, neurons, layers):
-
     #Load the data and generate features
     debug = False
     merge_classes = []
     rm_classes = []
-    add_sessions = 'none'
     training_data = data_directory + 'train_users_2.csv'
     test_data = data_directory + 'test_users.csv'
-    df_train, df_test, labels = feateng.feateng1(training_data,test_data,add_sessions,rm_classes,merge_classes,debug)
+    df_train, df_test, labels, id_train, id_test = feateng.feateng1(training_data,test_data,add_sessions,rm_classes,merge_classes,rescale_predictors,debug)
 
     #print some information about the data
     n_train, n_feats = np.shape(df_train)
@@ -81,9 +95,6 @@ def main(data_directory, output_filename, seed, n_iter, cv, batch_size, epochs, 
     #split training data into train and holdout sets (last 10% of data)
     X,Y = split_train_test(df_train,labels)
 
-    #If requested, rescale predictors between zero and one.
-    X = rescale_predictors(X)
-
     #format data for fitting
     #some counts
     n_classes = np.shape(np.unique(Y['train']))[0]
@@ -94,17 +105,16 @@ def main(data_directory, output_filename, seed, n_iter, cv, batch_size, epochs, 
     y_train = keras.utils.to_categorical(Y['train'], num_classes=12)
     
     #set up randomized search parameter distributions
-    import scipy.stats as st
     params = {
-        "batch_size": eval(batch_size),
-        "epochs": eval(epochs),
-        "learn_rate": eval(learn_rate),
-        "momentum": eval(momentum),
-        "init_mode": eval(init_mode),
-        "activation": eval(activation),
-        "dropout_rate": eval(dropout_rate),
-        "neurons": eval(neurons),
-        "layers": eval(layers),
+        "batch_size": batch_size,
+        "epochs": epochs,
+        "learn_rate": learn_rate,
+        "momentum": momentum,
+        "init_mode": init_mode,
+        "activation": activation,
+        "dropout_rate": dropout_rate,
+        "neurons": neurons,
+        "layers": layers,
     }
     # Function to create model for KerasClassifier
     
@@ -134,13 +144,13 @@ def main(data_directory, output_filename, seed, n_iter, cv, batch_size, epochs, 
         return model
     # fix the random seed for reproducibility, but note that
     # in practice we likely want to run the model with multiple initial states.
-    np.random.seed(eval(seed))
+    np.random.seed(seed)
     # create model
     model = KerasClassifier(build_fn=create_model, verbose=1)
     #execute randomized search
     tic = time.time()
     from sklearn.model_selection import RandomizedSearchCV
-    gs = RandomizedSearchCV(model, params, n_jobs=1, n_iter=eval(n_iter), verbose=2, cv=cv)
+    gs = RandomizedSearchCV(model, params, n_jobs=1, n_iter=n_iter, verbose=2, cv=cv)
     gs_result = gs.fit(x_train, y_train)
     toc = time.time()-tic
     # summarize results
@@ -155,7 +165,7 @@ def main(data_directory, output_filename, seed, n_iter, cv, batch_size, epochs, 
     print "\tWriting to %s..." % (output_filename)
     f = open(output_filename,'a')
     for mean, stdev, param in zip(means, stds, params):
-        f.write("%f,%f,%f,%f,%r\n" % (mean, stdev, eval(seed), toc, param))
+        f.write("%f,%f,%f,%f,%r\n" % (mean, stdev, seed, toc, param))
     f.close()
     print "\tDONE."
 
@@ -163,44 +173,53 @@ def main(data_directory, output_filename, seed, n_iter, cv, batch_size, epochs, 
 if __name__ == '__main__':
 
     #set local_model to True for debugging on local machine
-    local_mode = False
+    local_mode = True
     if local_mode:
-        print "Running in local mode."
         data_directory = "../data/"
-        output_filename = "fitKeras_output.txt"
-        seed = "0"
-        n_iter = "1"
-        cv = "5"
-        batch_size = "[10,20]"
-        epochs = "[5,10]"
-        learn_rate = "[0.1,0.2]"
-        momentum = "[0,0.01]"
-        init_mode = "['uniform','lecun_uniform']"
-        activation = "['relu','sigmoid']"
-        dropout_rate = "[0.2]"
-        neurons = "st.randint(n_feats, 200)"
-        layers = "[1.0]"
+        add_sessions = 'none'
+        output_filename = 'fitKeras_output.txt'
+        rescale_predictors = True
+        seed = 0
+        n_iter = 1
+        cv = 5
+        batch_size = [10,20]
+        epochs = [5,10]
+        learn_rate = [0.1,0.2]
+        momentum = [0,0.01]
+        init_mode = ['uniform','lecun_uniform']
+        activation = ['relu','sigmoid']
+        dropout_rate = [0.2]
+        neurons = st.randint(100, 200)
+        layers = [1.0]
+        print "Running in local mode."
+        
+        
     #if running on cluster, then read environmental variables here
     if not local_mode:
+        #read in environmental variables
         data_directory = 'data/'
+        add_sessions = os.environ['ADD_SESSIONS']
         output_filename = os.environ['OUTPUT_FILENAME']
-        seed = os.environ['SEED']
-        n_iter = os.environ['N_ITER']
-        cv = os.environ['CV']
-        batch_size = os.environ['BATCH_SIZE']
-        epochs = os.environ['EPOCHS']
-        learn_rate = os.environ['LEARN_RATE']
-        momentum = os.environ['MOMENTUM']
-        init_mode = os.environ['INIT_MODE']
-        activation = os.environ['ACTIVATION']
-        dropout_rate = os.environ['DROPOUT_RATE']
-        neurons = os.environ['NEURONS']
-        layers = os.environ['LAYERS']
+        rescale_predictors = os.environ['RESCALE_PREDICTORS']
+        seed = eval(os.environ['SEED'])
+        n_iter = eval(os.environ['N_ITER'])
+        cv = eval(os.environ['CV'])
+        batch_size = eval(os.environ['BATCH_SIZE'])
+        epochs = eval(os.environ['EPOCHS'])
+        learn_rate = eval(os.environ['LEARN_RATE'])
+        momentum = eval(os.environ['MOMENTUM'])
+        init_mode = eval(os.environ['INIT_MODE'])
+        activation = eval(os.environ['ACTIVATION'])
+        dropout_rate = eval(os.environ['DROPOUT_RATE'])
+        neurons = eval(os.environ['NEURONS'])
+        layers = eval(os.environ['LAYERS'])
 
     #print the inputs
     print "Input variables:"
     print "\t data_directory = %s" % (data_directory)
+    print "\t add_sessions = %s" % (add_sessions)
     print "\t output_filename = %s" % (output_filename)
+    print "\t rescale_predictors = %s" % (rescale_predictors)
     print "\t seed = %s" % (seed)
     print "\t n_iter = %s" % (n_iter)
     print "\t cv = %s" % (cv)
@@ -215,4 +234,4 @@ if __name__ == '__main__':
     print "\t layers = %s" % (layers)
 
     #execute main function
-    main(data_directory, output_filename, seed, n_iter, cv, batch_size, epochs, learn_rate, momentum, init_mode, activation, neurons, layers)
+    main(data_directory, add_sessions, output_filename, rescale_predictors, seed, n_iter, cv, batch_size, epochs, learn_rate, momentum, init_mode, activation, dropout_rate, neurons, layers)
